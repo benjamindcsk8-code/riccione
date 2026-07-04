@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Facturas — Riccione 2026</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #0b0b0b; min-height: 100vh; }
+.header { background: #0b0b0b; padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.header h1 { color: #fff; font-size: 18px; font-weight: 500; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.sync-btn { background: #222; border: 0.5px solid #444; color: #ccc; font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.sync-btn:hover { background: #333; }
+.last-update { color: #666; font-size: 12px; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.loading { text-align: center; padding: 60px; color: #898781; font-size: 14px; }
+.error-msg { background: #fff1f1; border: 0.5px solid #fca5a5; border-radius: 8px; padding: 14px 18px; color: #a32d2d; font-size: 13px; margin-bottom: 20px; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.kpi { background: #fff; border-radius: 12px; border: 0.5px solid rgba(11,11,11,0.1); padding: 16px 18px; }
+.kpi-label { font-size: 11px; color: #898781; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.kpi-value { font-size: 24px; font-weight: 500; color: #0b0b0b; line-height: 1; }
+.kpi-sub { font-size: 12px; color: #898781; margin-top: 6px; }
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.card { background: #fff; border-radius: 12px; border: 0.5px solid rgba(11,11,11,0.1); padding: 18px 20px; }
+.card-title { font-size: 11px; font-weight: 500; color: #52514e; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th { font-size: 11px; color: #898781; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; text-align: left; border-bottom: 0.5px solid #e5e5e3; font-weight: 500; }
+td { font-size: 13px; padding: 10px 10px; border-bottom: 0.5px solid #f0f0ee; color: #0b0b0b; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.monto { font-weight: 500; text-align: right; }
+td.muted { color: #52514e; }
+a.link { color: #185fa5; text-decoration: none; font-size: 12px; }
+a.link:hover { text-decoration: underline; }
+.empty { text-align: center; padding: 32px; color: #898781; font-size: 14px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+@media (max-width: 700px) {
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .charts-row { grid-template-columns: 1fr; }
+  .wrap { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Control de facturas — Riccione 2026</h1>
+  <div class="header-right">
+    <span class="last-update" id="last-update">Cargando datos…</span>
+    <button class="sync-btn" onclick="loadData()">↻ Actualizar</button>
+  </div>
+</div>
+
+<div class="wrap" id="main-wrap">
+  <div class="loading" id="loading-msg">Cargando datos del Sheet…</div>
+</div>
+
+<script>
+const CSV_URLS = {
+  'Junio 2026': 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_ScIqj7ZJWhIhMNL5yknqziqGA430R3R66UXjGYqlY678RHyAQ37Z7_m0rNhJjcWOsu5FR6toazkp/pub?gid=2123005577&single=true&output=csv'
+};
+
+let ALL_DATA = [];
+let chartProv = null, chartMes = null;
+const CLP = v => '$' + Math.round(v).toLocaleString('es-CL');
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.replace(/\r/g,'').trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = [];
+    let cur = '', inQ = false;
+    for (let c of line) {
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else cur += c;
+    }
+    vals.push(cur.trim());
+    const obj = {};
+    headers.forEach((h,i) => { obj[h] = (vals[i]||'').replace(/\r/g,''); });
+    return obj;
+  }).filter(r => r['Numero_factura'] && r['Numero_factura'].trim() !== '');
+}
+
+async function loadData() {
+  document.getElementById('last-update').textContent = 'Actualizando…';
+  ALL_DATA = [];
+  const errors = [];
+
+  for (const [mes, url] of Object.entries(CSV_URLS)) {
+    try {
+      const res = await fetch(url + '&cachebust=' + Date.now());
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      const rows = parseCSV(text);
+      rows.forEach(r => {
+        ALL_DATA.push({
+          mes,
+          numero: r['Numero_factura'] || '',
+          emisor: r['Emisor'] || '',
+          fecha: r['Fecha_emision'] || '',
+          total: parseFloat((r['Total_con_IVA']||'0').replace(/\./g,'').replace(',','.')) || 0,
+          neto: parseFloat((r['Importe_Neto']||'0').replace(/\./g,'').replace(',','.')) || 0,
+          url: r['URL_Factura'] || ''
+        });
+      });
+    } catch(e) {
+      errors.push(mes + ': ' + e.message);
+    }
+  }
+
+  const now = new Date();
+  document.getElementById('last-update').textContent = 'Actualizado ' + now.toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit'});
+  renderDash(errors);
+}
+
+function renderDash(errors) {
+  const wrap = document.getElementById('main-wrap');
+
+  let html = '';
+  if (errors.length) {
+    html += '<div class="error-msg">No se pudo cargar: ' + errors.join(', ') + '. Verifica que el Sheet esté publicado.</div>';
+  }
+
+  html += `
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">Total facturas</div><div class="kpi-value" id="k-total">0</div><div class="kpi-sub">en el período</div></div>
+    <div class="kpi"><div class="kpi-label">Gasto total con IVA</div><div class="kpi-value" id="k-gasto">$0</div><div class="kpi-sub" id="k-neto"></div></div>
+    <div class="kpi"><div class="kpi-label">Proveedor principal</div><div class="kpi-value" style="font-size:15px;padding-top:4px" id="k-top-prov">—</div><div class="kpi-sub" id="k-top-val"></div></div>
+    <div class="kpi"><div class="kpi-label">Factura más alta</div><div class="kpi-value" id="k-max">$0</div><div class="kpi-sub" id="k-max-quien"></div></div>
+  </div>
+  <div class="charts-row">
+    <div class="card">
+      <div class="card-title">Gasto por proveedor</div>
+      <div style="position:relative;height:200px;"><canvas id="chart-prov" role="img" aria-label="Gasto por proveedor">Gasto por proveedor.</canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Facturas por proveedor (cantidad)</div>
+      <div style="position:relative;height:200px;"><canvas id="chart-cant" role="img" aria-label="Cantidad de facturas por proveedor">Cantidad por proveedor.</canvas></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Detalle de facturas</div>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr>
+        <th style="width:14%">N° factura</th>
+        <th style="width:30%">Emisor</th>
+        <th style="width:13%">Fecha emisión</th>
+        <th style="width:15%">Total con IVA</th>
+        <th style="width:14%">Importe neto</th>
+        <th style="width:14%">Archivo</th>
+      </tr></thead>
+      <tbody id="tabla-body"></tbody>
+    </table>
+    </div>
+  </div>`;
+
+  wrap.innerHTML = html;
+
+  if (chartProv) { chartProv.destroy(); chartProv = null; }
+  if (chartMes) { chartMes.destroy(); chartMes = null; }
+
+  renderMetrics();
+}
+
+function renderMetrics() {
+  const data = ALL_DATA;
+  if (!data.length) {
+    document.getElementById('tabla-body').innerHTML = '<tr><td colspan="6" class="empty">Sin facturas cargadas</td></tr>';
+    return;
+  }
+
+  const total = data.length;
+  const gasto = data.reduce((s,d)=>s+d.total,0);
+  const neto = data.reduce((s,d)=>s+d.neto,0);
+
+  const byProv = {};
+  data.forEach(d=>{ byProv[d.emisor]=(byProv[d.emisor]||0)+d.total; });
+  const provSort = Object.entries(byProv).sort((a,b)=>b[1]-a[1]);
+  const topProv = provSort[0];
+
+  const maxFact = [...data].sort((a,b)=>b.total-a.total)[0];
+
+  document.getElementById('k-total').textContent = total;
+  document.getElementById('k-gasto').textContent = CLP(gasto);
+  document.getElementById('k-neto').textContent = 'Neto: ' + CLP(neto);
+  document.getElementById('k-top-prov').textContent = topProv ? (topProv[0].length>20?topProv[0].slice(0,20)+'…':topProv[0]) : '—';
+  document.getElementById('k-top-val').textContent = topProv ? CLP(topProv[1]) : '';
+  document.getElementById('k-max').textContent = maxFact ? CLP(maxFact.total) : '$0';
+  document.getElementById('k-max-quien').textContent = maxFact ? (maxFact.emisor.length>22?maxFact.emisor.slice(0,22)+'…':maxFact.emisor) : '';
+
+  const provLabels = provSort.map(([k])=>k.length>20?k.slice(0,20)+'…':k);
+  const provVals = provSort.map(([,v])=>v);
+  const provCants = provSort.map(([k])=>data.filter(d=>d.emisor===k).length);
+
+  chartProv = new Chart(document.getElementById('chart-prov'), {
+    type:'bar', indexAxis:'y',
+    data:{ labels:provLabels, datasets:[{ data:provVals, backgroundColor:'#2a78d6', borderRadius:4, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>' '+CLP(ctx.raw) } } }, scales:{ x:{ grid:{color:'#e5e5e3'}, ticks:{ callback:v=>CLP(v), font:{size:10}, color:'#898781' } }, y:{ grid:{display:false}, ticks:{ font:{size:11}, color:'#52514e' } } } }
+  });
+
+  chartMes = new Chart(document.getElementById('chart-cant'), {
+    type:'bar', indexAxis:'y',
+    data:{ labels:provLabels, datasets:[{ data:provCants, backgroundColor:'#1baf7a', borderRadius:4, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>` ${ctx.raw} factura${ctx.raw!==1?'s':''}` } } }, scales:{ x:{ grid:{color:'#e5e5e3'}, ticks:{ stepSize:1, font:{size:10}, color:'#898781' } }, y:{ grid:{display:false}, ticks:{ font:{size:11}, color:'#52514e' } } } }
+  });
+
+  const sorted = [...data].sort((a,b)=>{
+    const d1=a.fecha.split('-').reverse().join(''), d2=b.fecha.split('-').reverse().join('');
+    return d2.localeCompare(d1);
+  });
+
+  document.getElementById('tabla-body').innerHTML = sorted.map(d=>`
+    <tr>
+      <td class="muted">${d.numero}</td>
+      <td title="${d.emisor}">${d.emisor.length>28?d.emisor.slice(0,28)+'…':d.emisor}</td>
+      <td class="muted">${d.fecha}</td>
+      <td class="monto">${CLP(d.total)}</td>
+      <td class="monto muted">${CLP(d.neto)}</td>
+      <td>${d.url?'<a class="link" href="'+d.url+'" target="_blank">Ver archivo</a>':'—'}</td>
+    </tr>`).join('');
+}
+
+loadData();
+</script>
+</body>
+</html>
