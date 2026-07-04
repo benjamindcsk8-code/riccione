@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Facturas — Riccione 2026</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #0b0b0b; min-height: 100vh; }
+.header { background: #0b0b0b; padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.header h1 { color: #fff; font-size: 18px; font-weight: 500; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.sync-btn { background: #222; border: 0.5px solid #444; color: #ccc; font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.sync-btn:hover { background: #333; }
+.last-update { color: #666; font-size: 12px; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.filters label { font-size: 13px; color: #52514e; }
+.filters select { font-size: 13px; padding: 7px 12px; border-radius: 8px; border: 0.5px solid #ccc; background: #fff; color: #0b0b0b; cursor: pointer; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.kpi { background: #fff; border-radius: 12px; border: 0.5px solid rgba(11,11,11,0.1); padding: 16px 18px; }
+.kpi-label { font-size: 11px; color: #898781; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.kpi-value { font-size: 24px; font-weight: 500; color: #0b0b0b; line-height: 1; }
+.kpi-sub { font-size: 12px; color: #898781; margin-top: 6px; }
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.card { background: #fff; border-radius: 12px; border: 0.5px solid rgba(11,11,11,0.1); padding: 18px 20px; }
+.card-title { font-size: 11px; font-weight: 500; color: #52514e; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th { font-size: 11px; color: #898781; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; text-align: left; border-bottom: 0.5px solid #e5e5e3; font-weight: 500; }
+td { font-size: 13px; padding: 10px 10px; border-bottom: 0.5px solid #f0f0ee; color: #0b0b0b; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.monto { font-weight: 500; text-align: right; }
+td.muted { color: #52514e; }
+a.link { color: #185fa5; text-decoration: none; font-size: 12px; }
+a.link:hover { text-decoration: underline; }
+.empty { text-align: center; padding: 32px; color: #898781; font-size: 14px; }
+.loading-bar { text-align: center; padding: 12px; color: #898781; font-size: 13px; background: #fff; border-radius: 8px; margin-bottom: 12px; border: 0.5px solid rgba(11,11,11,0.1); }
+@media (max-width: 700px) {
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .charts-row { grid-template-columns: 1fr; }
+  .wrap { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Control de facturas — Riccione 2026</h1>
+  <div class="header-right">
+    <span class="last-update" id="last-update">Cargando…</span>
+    <button class="sync-btn" onclick="loadData()">↻ Actualizar</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="filters">
+    <label>Mes</label>
+    <select id="f-mes" onchange="renderMetrics()">
+      <option value="all">Todos los meses</option>
+      <option value="Enero 2026">Enero</option>
+      <option value="Febrero 2026">Febrero</option>
+      <option value="Marzo 2026">Marzo</option>
+      <option value="Abril 2026">Abril</option>
+      <option value="Mayo 2026">Mayo</option>
+      <option value="Junio 2026">Junio</option>
+      <option value="Julio 2026">Julio</option>
+      <option value="Agosto 2026">Agosto</option>
+      <option value="Septiembre 2026">Septiembre</option>
+      <option value="Octubre 2026">Octubre</option>
+      <option value="Noviembre 2026">Noviembre</option>
+      <option value="Diciembre 2026">Diciembre</option>
+    </select>
+  </div>
+
+  <div id="loading-status" class="loading-bar">Cargando datos de los 12 meses…</div>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">Total facturas</div><div class="kpi-value" id="k-total">—</div><div class="kpi-sub">en el período</div></div>
+    <div class="kpi"><div class="kpi-label">Gasto total con IVA</div><div class="kpi-value" id="k-gasto">—</div><div class="kpi-sub" id="k-neto"></div></div>
+    <div class="kpi"><div class="kpi-label">Proveedor principal</div><div class="kpi-value" style="font-size:15px;padding-top:4px" id="k-top-prov">—</div><div class="kpi-sub" id="k-top-val"></div></div>
+    <div class="kpi"><div class="kpi-label">Factura más alta</div><div class="kpi-value" id="k-max">—</div><div class="kpi-sub" id="k-max-quien"></div></div>
+  </div>
+
+  <div class="charts-row">
+    <div class="card">
+      <div class="card-title">Gasto por proveedor</div>
+      <div style="position:relative;height:220px;"><canvas id="chart-prov" role="img" aria-label="Gasto por proveedor">Gasto por proveedor.</canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Gasto mensual</div>
+      <div style="position:relative;height:220px;"><canvas id="chart-mes" role="img" aria-label="Gasto mensual">Gasto por mes.</canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Detalle de facturas</div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th style="width:13%">N° factura</th>
+          <th style="width:10%">Mes</th>
+          <th style="width:26%">Emisor</th>
+          <th style="width:12%">Fecha emisión</th>
+          <th style="width:14%">Total con IVA</th>
+          <th style="width:13%">Importe neto</th>
+          <th style="width:12%">Archivo</th>
+        </tr></thead>
+        <tbody id="tabla-body"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_ScIqj7ZJWhIhMNL5yknqziqGA430R3R66UXjGYqlY678RHyAQ37Z7_m0rNhJjcWOsu5FR6toazkp/pub?single=true&output=csv&gid=';
+
+const CSV_URLS = {
+  'Enero 2026':      BASE + '0',
+  'Febrero 2026':    BASE + '1332905554',
+  'Marzo 2026':      BASE + '1567861426',
+  'Abril 2026':      BASE + '168539383',
+  'Mayo 2026':       BASE + '997646447',
+  'Junio 2026':      BASE + '2123005577',
+  'Julio 2026':      BASE + '1899864560',
+  'Agosto 2026':     BASE + '1500597242',
+  'Septiembre 2026': BASE + '963809220',
+  'Octubre 2026':    BASE + '1317197680',
+  'Noviembre 2026':  BASE + '129152425',
+  'Diciembre 2026':  BASE + '1866706176'
+};
+
+const MESES_ORDER = Object.keys(CSV_URLS);
+const CLP = v => '$' + Math.round(v).toLocaleString('es-CL');
+let ALL_DATA = [];
+let chartProv = null, chartMes = null;
+
+function parseCSV(text, mes) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.replace(/\r/g,'').trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = [];
+    let cur = '', inQ = false;
+    for (let c of line) {
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else cur += c;
+    }
+    vals.push(cur.trim());
+    const obj = {};
+    headers.forEach((h,i) => { obj[h] = (vals[i]||'').replace(/\r/g,''); });
+    return obj;
+  })
+  .filter(r => r['Numero_factura'] && r['Numero_factura'].trim() !== '')
+  .map(r => ({
+    mes,
+    numero:  r['Numero_factura'] || '',
+    emisor:  r['Emisor'] || '',
+    fecha:   r['Fecha_emision'] || '',
+    total:   parseFloat((r['Total_con_IVA']||'0').replace(/\./g,'').replace(',','.')) || 0,
+    neto:    parseFloat((r['Importe_Neto']||'0').replace(/\./g,'').replace(',','.')) || 0,
+    url:     r['URL_Factura'] || ''
+  }));
+}
+
+async function loadData() {
+  document.getElementById('last-update').textContent = 'Actualizando…';
+  document.getElementById('loading-status').style.display = 'block';
+  document.getElementById('loading-status').textContent = 'Cargando datos de los 12 meses…';
+  ALL_DATA = [];
+  let loaded = 0;
+
+  const promises = Object.entries(CSV_URLS).map(async ([mes, url]) => {
+    try {
+      const res = await fetch(url + '&t=' + Date.now());
+      if (!res.ok) return;
+      const text = await res.text();
+      const rows = parseCSV(text, mes);
+      ALL_DATA.push(...rows);
+    } catch(e) {}
+    loaded++;
+    document.getElementById('loading-status').textContent = `Cargando… ${loaded}/12 meses`;
+  });
+
+  await Promise.all(promises);
+
+  const now = new Date();
+  document.getElementById('last-update').textContent = 'Actualizado ' + now.toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit'});
+  document.getElementById('loading-status').style.display = 'none';
+  renderMetrics();
+}
+
+function getFiltered() {
+  const mes = document.getElementById('f-mes').value;
+  return mes === 'all' ? ALL_DATA : ALL_DATA.filter(d => d.mes === mes);
+}
+
+function renderMetrics() {
+  const data = getFiltered();
+  const mes = document.getElementById('f-mes').value;
+
+  if (!data.length) {
+    document.getElementById('k-total').textContent = '0';
+    document.getElementById('k-gasto').textContent = '$0';
+    document.getElementById('k-neto').textContent = '';
+    document.getElementById('k-top-prov').textContent = '—';
+    document.getElementById('k-top-val').textContent = '';
+    document.getElementById('k-max').textContent = '$0';
+    document.getElementById('k-max-quien').textContent = 'Sin datos aún';
+    document.getElementById('tabla-body').innerHTML = '<tr><td colspan="7" class="empty">Sin facturas para este período</td></tr>';
+    if (chartProv) { chartProv.destroy(); chartProv = null; }
+    if (chartMes)  { chartMes.destroy();  chartMes = null;  }
+    return;
+  }
+
+  const gasto = data.reduce((s,d)=>s+d.total,0);
+  const neto  = data.reduce((s,d)=>s+d.neto,0);
+  const byProv = {};
+  data.forEach(d=>{ byProv[d.emisor]=(byProv[d.emisor]||0)+d.total; });
+  const provSort = Object.entries(byProv).sort((a,b)=>b[1]-a[1]);
+  const topProv = provSort[0];
+  const maxFact = [...data].sort((a,b)=>b.total-a.total)[0];
+
+  document.getElementById('k-total').textContent = data.length;
+  document.getElementById('k-gasto').textContent = CLP(gasto);
+  document.getElementById('k-neto').textContent  = 'Neto: ' + CLP(neto);
+  document.getElementById('k-top-prov').textContent = topProv[0].length>22 ? topProv[0].slice(0,22)+'…' : topProv[0];
+  document.getElementById('k-top-val').textContent  = CLP(topProv[1]);
+  document.getElementById('k-max').textContent      = CLP(maxFact.total);
+  document.getElementById('k-max-quien').textContent = maxFact.emisor.length>24 ? maxFact.emisor.slice(0,24)+'…' : maxFact.emisor;
+
+  if (chartProv) { chartProv.destroy(); chartProv = null; }
+  if (chartMes)  { chartMes.destroy();  chartMes = null;  }
+
+  const provLabels = provSort.map(([k])=>k.length>20?k.slice(0,20)+'…':k);
+  const provVals   = provSort.map(([,v])=>v);
+  chartProv = new Chart(document.getElementById('chart-prov'), {
+    type:'bar', indexAxis:'y',
+    data:{ labels:provLabels, datasets:[{ data:provVals, backgroundColor:'#2a78d6', borderRadius:4, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>' '+CLP(ctx.raw) } } },
+      scales:{ x:{ grid:{color:'#e5e5e3'}, ticks:{ callback:v=>CLP(v), font:{size:10}, color:'#898781' } }, y:{ grid:{display:false}, ticks:{ font:{size:11}, color:'#52514e' } } } }
+  });
+
+  const byMes = {};
+  MESES_ORDER.forEach(m=>{ byMes[m]=0; });
+  ALL_DATA.forEach(d=>{ byMes[d.mes]=(byMes[d.mes]||0)+d.total; });
+  const mesLabels  = MESES_ORDER.map(m=>m.split(' ')[0].slice(0,3));
+  const mesVals    = MESES_ORDER.map(m=>byMes[m]||0);
+  const mesColors  = MESES_ORDER.map(m=> mes==='all'||mes===m ? '#2a78d6' : '#d3d1c7');
+  chartMes = new Chart(document.getElementById('chart-mes'), {
+    type:'bar',
+    data:{ labels:mesLabels, datasets:[{ data:mesVals, backgroundColor:mesColors, borderRadius:4, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>' '+CLP(ctx.raw) } } },
+      scales:{ x:{ grid:{display:false}, ticks:{ font:{size:10}, color:'#52514e', autoSkip:false, maxRotation:0 } },
+               y:{ grid:{color:'#e5e5e3'}, ticks:{ callback:v=>v===0?'':CLP(v), font:{size:10}, color:'#898781' } } } }
+  });
+
+  const sorted = [...data].sort((a,b)=>{
+    const d1=a.fecha.split('-').reverse().join(''), d2=b.fecha.split('-').reverse().join('');
+    return d2.localeCompare(d1);
+  });
+  document.getElementById('tabla-body').innerHTML = sorted.map(d=>`
+    <tr>
+      <td class="muted">${d.numero}</td>
+      <td class="muted" style="font-size:11px">${d.mes.split(' ')[0]}</td>
+      <td title="${d.emisor}">${d.emisor.length>26?d.emisor.slice(0,26)+'…':d.emisor}</td>
+      <td class="muted">${d.fecha}</td>
+      <td class="monto">${CLP(d.total)}</td>
+      <td class="monto muted">${CLP(d.neto)}</td>
+      <td>${d.url?'<a class="link" href="'+d.url+'" target="_blank">Ver archivo</a>':'—'}</td>
+    </tr>`).join('');
+}
+
+loadData();
+</script>
+</body>
+</html>
